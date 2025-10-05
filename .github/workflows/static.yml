@@ -1,4 +1,3 @@
-# .github/workflows/deploy-pages.yml（抜粋）
 jobs:
   deploy:
     steps:
