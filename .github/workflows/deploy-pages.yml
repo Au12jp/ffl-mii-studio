@@ -1,28 +1,21 @@
-# Simple workflow for deploying static content to GitHub Pages
+# .github/workflows/deploy-pages.yml
 name: Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
   deploy:
     environment:
       name: github-pages
@@ -31,13 +24,83 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
+      # すべての HTML を対象に baseurl を注入＆先頭'/'参照を '/<repo>/' に修正
+      - name: Patch baseurl in all HTML
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run patch script
+        env:
+          REPO_NAME: ${{ github.event.repository.name }} # 例: ffl-mii-studio
+          ROOT_DIR: .
+        run: |
+          node -e "require('fs').mkdirSync('scripts',{recursive:true})"
+          cat > scripts/patch-baseurl.mjs <<'EOF'
+          import fs from 'fs';
+          import path from 'path';
+          const repo = process.env.REPO_NAME || (process.env.GITHUB_REPOSITORY||'').split('/')[1];
+          const ROOT = process.env.ROOT_DIR || '.';
+          if (!repo) { console.error('REPO_NAME not set'); process.exit(1); }
+          if (!fs.existsSync(ROOT)) { console.warn(`[patch] ROOT '${ROOT}' not found; skip.`); process.exit(0); }
+
+          const htmlFiles = [];
+          (function walk(d){
+            for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+              const p = path.join(d, e.name);
+              if (e.isDirectory()) walk(p);
+              else if (e.isFile() && e.name.toLowerCase().endsWith('.html')) htmlFiles.push(p);
+            }
+          })(ROOT);
+
+          const attrRe = /(\s(?:src|href)=['"])(\/)(?!\/|https?:)/g; // /で始まるが //, http(s) ではない
+          let patched = 0;
+          for (const file of htmlFiles) {
+            let s = fs.readFileSync(file, 'utf8');
+            const before = s;
+
+            // 先頭スラッシュ参照を '/<repo>/' に
+            s = s.replace(attrRe, `$1/${repo}/`);
+
+            // <base> が無ければ <head> 直後に挿入
+            if (!/<base\s/i.test(s)) {
+              s = s.replace(/<head([^>]*)>/i, (m) => `${m}\n  <base href="/${repo}/">`);
+            }
+
+            if (s !== before) { fs.writeFileSync(file, s); patched++; }
+          }
+          console.log(`[patch] Patched ${patched} HTML files under ${ROOT}`);
+          EOF
+          node scripts/patch-baseurl.mjs
+
+      # サニティチェック（index.html 必須）
+      - name: Sanity checks
+        run: |
+          echo "== repo root =="
+          ls -la
+          if [ ! -f ./index.html ]; then
+            echo "::error::index.html not found at repository root (artifact root)." && exit 1
+          fi
+
+      # 任意：SPA の場合は 404.html を index.html のコピーに
+      - name: Add 404.html for SPA (optional)
+        run: |
+          if [ ! -f ./404.html ] && [ -f ./index.html ]; then
+            cp ./index.html ./404.html
+          fi
+
+      # Jekyll 無効化（推奨）
+      - name: Add .nojekyll
+        run: touch ./.nojekyll
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          path: '.'   # リポジトリ直下を公開
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
