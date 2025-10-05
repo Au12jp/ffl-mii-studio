@@ -1,4 +1,3 @@
-# .github/workflows/deploy-pages.yml
 name: Deploy static content to Pages
 
 on:
@@ -28,10 +27,56 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # ★ ベースURL一括変換（root配下の全HTML）
+      - name: Patch baseurl in all HTML
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run patch script
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}   # 例: ffl-mii-studio
+          ROOT_DIR: root
+        run: |
+          node -e "require('fs').mkdirSync('scripts',{recursive:true})"
+          cat > scripts/patch-baseurl.mjs <<'EOF'
+          import fs from 'fs';
+          import path from 'path';
+          const repo = process.env.REPO_NAME || process.env.GITHUB_REPOSITORY?.split('/')[1];
+          if (!repo) { console.error('REPO_NAME not set'); process.exit(1); }
+          const ROOT = process.env.ROOT_DIR || 'root';
+          const htmlFiles = [];
+          const walk = (d) => {
+            for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+              const p = path.join(d, e.name);
+              if (e.isDirectory()) walk(p);
+              else if (e.isFile() && e.name.toLowerCase().endsWith('.html')) htmlFiles.push(p);
+            }
+          };
+          walk(ROOT);
+          const attrRe = /(\s(?:src|href)=['"])(\/)(?!\/|https?:)/g;
+          let changedCount = 0;
+          for (const file of htmlFiles) {
+            let s = fs.readFileSync(file, 'utf8');
+            const before = s;
+            s = s.replace(attrRe, `$1/${repo}/`);
+            if (s !== before) { fs.writeFileSync(file, s); changedCount++; }
+            if (!/<base\s/i.test(s)) {
+              s = s.replace(/<head([^>]*)>/i, (m) => `${m}\n  <base href="/${repo}/">`);
+              fs.writeFileSync(file, s);
+            }
+          }
+          console.log(`Patched ${changedCount} HTML files under ${ROOT}`);
+          EOF
+          node scripts/patch-baseurl.mjs
+
+      # （任意）.nojekyll を置く
+      - name: Add .nojekyll
+        run: |
+          touch root/.nojekyll
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # ここを '.' から 'root' に変更
           path: 'root'
 
       - name: Deploy to GitHub Pages
