@@ -1,25 +1,6 @@
-name: Deploy static content to Pages
-
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
+# .github/workflows/deploy-pages.yml（抜粋）
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,23 +8,26 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      # ★ ベースURL一括変換（root配下の全HTML）
+      # （任意）baseurl一括変換：対象を '.' に
       - name: Patch baseurl in all HTML
         uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Run patch script
         env:
-          REPO_NAME: ${{ github.event.repository.name }}   # 例: ffl-mii-studio
-          ROOT_DIR: root
+          REPO_NAME: ${{ github.event.repository.name }}
+          ROOT_DIR: .
         run: |
           node -e "require('fs').mkdirSync('scripts',{recursive:true})"
           cat > scripts/patch-baseurl.mjs <<'EOF'
           import fs from 'fs';
           import path from 'path';
           const repo = process.env.REPO_NAME || process.env.GITHUB_REPOSITORY?.split('/')[1];
-          if (!repo) { console.error('REPO_NAME not set'); process.exit(1); }
-          const ROOT = process.env.ROOT_DIR || 'root';
+          const ROOT = process.env.ROOT_DIR || '.';
+          if (!fs.existsSync(ROOT)) {
+            console.warn(`[patch] ROOT_DIR '${ROOT}' not found; skip patch.`);
+            process.exit(0);
+          }
           const htmlFiles = [];
           const walk = (d) => {
             for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -54,30 +38,28 @@ jobs:
           };
           walk(ROOT);
           const attrRe = /(\s(?:src|href)=['"])(\/)(?!\/|https?:)/g;
-          let changedCount = 0;
+          let changed = 0;
           for (const file of htmlFiles) {
             let s = fs.readFileSync(file, 'utf8');
             const before = s;
             s = s.replace(attrRe, `$1/${repo}/`);
-            if (s !== before) { fs.writeFileSync(file, s); changedCount++; }
             if (!/<base\s/i.test(s)) {
               s = s.replace(/<head([^>]*)>/i, (m) => `${m}\n  <base href="/${repo}/">`);
-              fs.writeFileSync(file, s);
             }
+            if (s !== before) { fs.writeFileSync(file, s); changed++; }
           }
-          console.log(`Patched ${changedCount} HTML files under ${ROOT}`);
+          console.log(`[patch] Patched ${changed} HTML files under ${ROOT}`);
           EOF
           node scripts/patch-baseurl.mjs
 
       # （任意）.nojekyll を置く
       - name: Add .nojekyll
-        run: |
-          touch root/.nojekyll
+        run: touch ./.nojekyll
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'root'
+          path: '.'   # ← ここを '.' に
 
       - name: Deploy to GitHub Pages
         id: deployment
