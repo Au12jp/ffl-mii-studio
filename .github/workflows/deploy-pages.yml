@@ -1,81 +1,43 @@
+# Simple workflow for deploying static content to GitHub Pages
 name: Deploy static content to Pages
 
 on:
+  # Runs on pushes targeting the default branch
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
+  # Single deploy job since we're just deploying
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
-      # （任意）baseurl一括変換：対象を '.' に
-      - name: Patch baseurl in all HTML
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Run patch script
-        env:
-          REPO_NAME: ${{ github.event.repository.name }}
-          ROOT_DIR: .
-        run: |
-          node -e "require('fs').mkdirSync('scripts',{recursive:true})"
-          cat > scripts/patch-baseurl.mjs <<'EOF'
-          import fs from 'fs';
-          import path from 'path';
-          const repo = process.env.REPO_NAME || process.env.GITHUB_REPOSITORY?.split('/')[1];
-          const ROOT = process.env.ROOT_DIR || '.';
-          if (!fs.existsSync(ROOT)) {
-            console.warn(`[patch] ROOT_DIR '${ROOT}' not found; skip patch.`);
-            process.exit(0);
-          }
-          const htmlFiles = [];
-          const walk = (d) => {
-            for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-              const p = path.join(d, e.name);
-              if (e.isDirectory()) walk(p);
-              else if (e.isFile() && e.name.toLowerCase().endsWith('.html')) htmlFiles.push(p);
-            }
-          };
-          walk(ROOT);
-          const attrRe = /(\s(?:src|href)=['"])(\/)(?!\/|https?:)/g;
-          let changed = 0;
-          for (const file of htmlFiles) {
-            let s = fs.readFileSync(file, 'utf8');
-            const before = s;
-            s = s.replace(attrRe, `$1/${repo}/`);
-            if (!/<base\s/i.test(s)) {
-              s = s.replace(/<head([^>]*)>/i, (m) => `${m}\n  <base href="/${repo}/">`);
-            }
-            if (s !== before) { fs.writeFileSync(file, s); changed++; }
-          }
-          console.log(`[patch] Patched ${changed} HTML files under ${ROOT}`);
-          EOF
-          node scripts/patch-baseurl.mjs
-
-      # （任意）.nojekyll を置く
-      - name: Add .nojekyll
-        run: touch ./.nojekyll
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'   # ← ここを '.' に
-
+          # Upload entire repository
+          path: '.'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
